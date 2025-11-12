@@ -1,9 +1,0 @@
-setup.py
-src/dsg_updater/__init__.py
-src/dsg_updater/rule_generator.py
-src/dsg_updater/update_generator.py
-src/dsg_updater.egg-info/PKG-INFO
-src/dsg_updater.egg-info/SOURCES.txt
-src/dsg_updater.egg-info/dependency_links.txt
-src/dsg_updater.egg-info/requires.txt
-src/dsg_updater.egg-info/top_level.txt

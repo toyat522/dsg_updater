@@ -1,0 +1,13 @@
+*.swp
+*.egg-info/
+*__pycache__*
+*.pyc
+build/
+yaml_pipeline/
+output/
+scene_graphs/
+graphs/
+scratch/
+*.zip
+*.log
+logs/
