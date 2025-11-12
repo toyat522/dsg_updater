@@ -1,12 +1,12 @@
 import argparse
-from dsg_updater.dsg_state_utils import get_held_objects, get_robot_pose
+from dsg_updater.dsg_state_utils import get_obj_center
 from heracles.query_interface import Neo4jWrapper
 from heracles_agents.dsg_interfaces import HeraclesDsgInterface
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--robot", type=str, required=True)
+    parser.add_argument("--object", type=str, required=True)
     args = parser.parse_args()
 
     dsgdb_conf = HeraclesDsgInterface(
@@ -23,12 +23,8 @@ def main():
         atomic_queries=True,
         print_profiles=False,
     ) as db:
-        x, y, z, qx, qy, qz, qw = get_robot_pose(db, args.robot)
-        held_objects = get_held_objects(db, args.robot)
-        print(f"\nRobot '{args.robot}' state:")
-        print(f"    (x: {x}, y: {y}, z: {z})")
-        print(f"    (qx: {qx}, qy: {qy}, qz: {qz}, qw: {qw})")
-        print(f"    Holding: {held_objects}")
+        x, y, z = get_obj_center(db, args.object)
+        print(f"\nObject '{args.object}' at (x: {x}, y: {y}, z: {z})")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import argparse
+from dsg_updater.dsg_state_utils import robot_hold_obj, robot_unhold_obj
 from heracles.query_interface import Neo4jWrapper
 from heracles_agents.dsg_interfaces import HeraclesDsgInterface
 
@@ -6,13 +7,7 @@ from heracles_agents.dsg_interfaces import HeraclesDsgInterface
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--robot", type=str, required=True)
-    parser.add_argument("--x", type=float, required=True)
-    parser.add_argument("--y", type=float, required=True)
-    parser.add_argument("--z", type=float, default=0.0)
-    parser.add_argument("--qw", type=float, default=1.0)
-    parser.add_argument("--qx", type=float, default=0.0)
-    parser.add_argument("--qy", type=float, default=0.0)
-    parser.add_argument("--qz", type=float, default=0.0)
+    parser.add_argument("--object", type=str, required=True)
     args = parser.parse_args()
 
     dsgdb_conf = HeraclesDsgInterface(
@@ -21,15 +16,8 @@ def main():
     )
 
     query = f"""
-    MERGE (r:Robot {{name: '{args.robot}'}})
-    SET r.x = {args.x},
-        r.y = {args.y},
-        r.z = {args.z},
-        r.qw = {args.qw},
-        r.qx = {args.qx},
-        r.qy = {args.qy},
-        r.qz = {args.qz}
-    RETURN r
+        MATCH (r:Robot {{name: '{args.robot}'}})-[:HOLDS]->(o:Object {{nodeSymbol: '{args.object}'}})
+        RETURN r, o
     """
 
     with Neo4jWrapper(
@@ -42,7 +30,15 @@ def main():
         print_profiles=False,
     ) as db:
         result = db.query(query)
-        print(f"\nUpdated robot pose: {result}")
+
+        if result:
+            print(f"\nRobot '{args.robot}' was holding '{args.object}'")
+            robot_unhold_obj(db, args.robot, args.object)
+            print(f"Released '{args.object}' from '{args.robot}'")
+        else:
+            print(f"\nRobot '{args.robot}' was not holding '{args.object}'")
+            robot_hold_obj(db, args.robot, args.object)
+            print(f"'{args.robot}' now holds '{args.object}'")
 
 
 if __name__ == "__main__":
