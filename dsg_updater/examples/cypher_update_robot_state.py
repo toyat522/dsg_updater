@@ -21,15 +21,13 @@ def main():
     )
 
     query = f"""
-    MERGE (r:Robot {{name: '{args.robot}'}})
-    SET r.x = {args.x},
-        r.y = {args.y},
-        r.z = {args.z},
-        r.qw = {args.qw},
-        r.qx = {args.qx},
-        r.qy = {args.qy},
-        r.qz = {args.qz}
-    RETURN r
+        MERGE (r:Robot {{name: '{args.robot}'}})
+        SET r.position = point({{x: {args.x}, y: {args.y}, z: {args.z}}}),
+            r.qw = {args.qw},
+            r.qx = {args.qx},
+            r.qy = {args.qy},
+            r.qz = {args.qz}
+        RETURN r
     """
 
     with Neo4jWrapper(

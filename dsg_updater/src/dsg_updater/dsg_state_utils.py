@@ -2,10 +2,11 @@ from heracles.query_interface import Neo4jWrapper
 
 
 def get_robot_pose(db: Neo4jWrapper, robot_name: str):
-    result = db.query(
-        f"MATCH (r:Robot {{name: '{robot_name}'}}) "
-        "RETURN r.x AS x, r.y AS y, r.z AS z, r.qw AS qw, r.qx AS qx, r.qy AS qy, r.qz AS qz"
-    )
+    result = db.query(f"""
+        MATCH (r:Robot {{name: '{robot_name}'}})
+        RETURN r.position.x AS x, r.position.y AS y, r.position.z AS z,
+        r.qw AS qw, r.qx AS qx, r.qy AS qy, r.qz AS qz
+    """)
 
     assert result, f"robot '{robot_name}' does not exist"
 
@@ -63,7 +64,7 @@ def get_obj_center(db: Neo4jWrapper, obj_symbol: str):
 
     assert obj_exists, f"object '{obj_symbol}' does not exist"
 
-    result = db.query(f"MATCH (n: Object {{nodeSymbol: '{obj_symbol}'}}) "
-                      "RETURN n.center as center""")[0]["center"]
+    result = db.query(f"MATCH (o: Object {{nodeSymbol: '{obj_symbol}'}}) "
+                      "RETURN o.center as center""")[0]["center"]
 
     return result.x, result.y, result.z
