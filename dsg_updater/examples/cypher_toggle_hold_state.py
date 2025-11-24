@@ -33,12 +33,16 @@ def main():
 
         if result:
             print(f"\nRobot '{args.robot}' was holding '{args.object}'")
-            robot_unhold_obj(db, args.robot, args.object)
-            print(f"Released '{args.object}' from '{args.robot}'")
+            if robot_unhold_obj(db, args.robot, args.object):
+                print(f"Released '{args.object}' from '{args.robot}'")
+            else:
+                print(f"Failed to release '{args.object}' from '{args.robot}'")
         else:
             print(f"\nRobot '{args.robot}' was not holding '{args.object}'")
-            robot_hold_obj(db, args.robot, args.object)
-            print(f"'{args.robot}' now holds '{args.object}'")
+            if robot_hold_obj(db, args.robot, args.object):
+                print(f"'{args.robot}' now holds '{args.object}'")
+            else:
+                print(f"'{args.robot}' failed to hold '{args.object}'")
 
 
 if __name__ == "__main__":

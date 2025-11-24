@@ -7,6 +7,17 @@ class Rule:
         self.condition = condition
         self.action = action
 
+    # Maybe these input strings should be in a more restrictive language
+    # which maps into a cypher query.
+    #
+    # By having a more restricted language, we can these rules can be more easily
+    # resolved.
+    def set_condition(query: str):
+        pass
+
+    def set_action(query: str):
+        pass
+
     def apply(self, db):
         affected = self.condition(db)
         if affected:
@@ -28,7 +39,7 @@ def obj_holding_rule():
 
             db.query(f"""
                 MATCH (r:Robot {{name: '{robot}'}})-[:HOLDS]->(o:Object {{nodeSymbol: '{obj}'}})
-                SET o.center = point({{x: r.position.x, y: r.position.y, z: r.position.z}})
+                SET o.center = r.position
                 RETURN o
             """)
 

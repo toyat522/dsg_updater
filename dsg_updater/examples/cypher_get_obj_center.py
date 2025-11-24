@@ -23,7 +23,13 @@ def main():
         atomic_queries=True,
         print_profiles=False,
     ) as db:
-        x, y, z = get_obj_center(db, args.object)
+        obj_center = get_obj_center(db, args.object)
+
+        if obj_center is None:
+            print(f"Failed to get center for object {args.object}")
+            return
+
+        x, y, z = obj_center
         print(f"\nObject '{args.object}' at (x: {x}, y: {y}, z: {z})")
 
 

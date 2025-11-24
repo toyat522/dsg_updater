@@ -23,7 +23,13 @@ def main():
         atomic_queries=True,
         print_profiles=False,
     ) as db:
-        x, y, z, qx, qy, qz, qw = get_robot_pose(db, args.robot)
+        robot_pose = get_robot_pose(db, args.robot)
+
+        if robot_pose is None:
+            print(f"Failed to get state for robot '{args.robot}'")
+            return
+
+        x, y, z, qx, qy, qz, qw = robot_pose
         held_objects = get_held_objects(db, args.robot)
         print(f"\nRobot '{args.robot}' state:")
         print(f"    (x: {x}, y: {y}, z: {z})")
