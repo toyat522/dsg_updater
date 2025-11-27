@@ -85,4 +85,7 @@ def set_obj_center(db: Neo4jWrapper, obj_symbol: str, x: float, y: float, z: flo
     db.query(f"MATCH (o:Object {{nodeSymbol: '{obj_symbol}'}})"
              f"SET o.center = point({{x: {x}, y: {y}, z: {z}}}) RETURN o")
 
+    db.query(f"MATCH (o:Object {{nodeSymbol: '{obj_symbol}'}})"
+             f"SET o.bbox_center = point({{x: {x}, y: {y}, z: {z}}}) RETURN o")
+
     return True

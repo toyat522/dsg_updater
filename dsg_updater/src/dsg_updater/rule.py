@@ -40,6 +40,7 @@ def obj_holding_rule():
             db.query(f"""
                 MATCH (r:Robot {{name: '{robot}'}})-[:HOLDS]->(o:Object {{nodeSymbol: '{obj}'}})
                 SET o.center = r.position
+                SET o.bbox_center = r.position
                 RETURN o
             """)
 
