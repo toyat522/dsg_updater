@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import time
 from dsg_updater.dsg_updater import DSG_Updater
 from dsg_updater.rule import obj_holding_rule
