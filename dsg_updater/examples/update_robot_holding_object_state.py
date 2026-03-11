@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
 from dsg_updater.dsg_updater import DSG_Updater
-from dsg_updater.rule import obj_holding_rule
+from dsg_updater.rule import drop_on_unhold_rule, obj_holding_rule, transitive_holding_rule
 from heracles_agents.dsg_interfaces import HeraclesDsgInterface
 
 
@@ -12,6 +12,8 @@ def main():
     )
     updater = DSG_Updater(dsgdb_conf)
     updater.add_rule(obj_holding_rule())
+    updater.add_rule(transitive_holding_rule())
+    updater.add_rule(drop_on_unhold_rule())
     while True:
         updater.update()
         time.sleep(1)
