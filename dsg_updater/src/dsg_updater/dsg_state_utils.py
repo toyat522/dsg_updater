@@ -88,34 +88,34 @@ def get_obj_center(db: Neo4jWrapper, obj_symbol: str) -> Optional[tuple]:
     return result.x, result.y, result.z
 
 
-def obj_hold_obj(db: Neo4jWrapper, holder_symbol: str, held_symbol: str) -> bool:
-    holder_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{holder_symbol}'}}) "
+def obj_with_obj(db: Neo4jWrapper, parent_symbol: str, child_symbol: str) -> bool:
+    parent_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{parent_symbol}'}}) "
                              "RETURN o.nodeSymbol AS nodeSymbol")
-    held_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{held_symbol}'}}) "
-                           "RETURN o.nodeSymbol AS nodeSymbol")
+    child_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{child_symbol}'}}) "
+                            "RETURN o.nodeSymbol AS nodeSymbol")
 
-    if not holder_exists or not held_exists:
+    if not parent_exists or not child_exists:
         return False
 
     db.query(f"""
-        MATCH (a:Object {{nodeSymbol: '{holder_symbol}'}}), (b:Object {{nodeSymbol: '{held_symbol}'}})
-        MERGE (a)-[:HOLDS]->(b)
+        MATCH (a:Object {{nodeSymbol: '{parent_symbol}'}}), (b:Object {{nodeSymbol: '{child_symbol}'}})
+        MERGE (a)-[:WITH]->(b)
         RETURN a, b
     """)
     return True
 
 
-def obj_unhold_obj(db: Neo4jWrapper, holder_symbol: str, held_symbol: str) -> bool:
-    holder_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{holder_symbol}'}}) "
+def obj_unwith_obj(db: Neo4jWrapper, parent_symbol: str, child_symbol: str) -> bool:
+    parent_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{parent_symbol}'}}) "
                              "RETURN o.nodeSymbol AS nodeSymbol")
-    held_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{held_symbol}'}}) "
-                           "RETURN o.nodeSymbol AS nodeSymbol")
+    child_exists = db.query(f"MATCH (o:Object {{nodeSymbol: '{child_symbol}'}}) "
+                            "RETURN o.nodeSymbol AS nodeSymbol")
 
-    if not holder_exists or not held_exists:
+    if not parent_exists or not child_exists:
         return False
 
     db.query(f"""
-        MATCH (a:Object {{nodeSymbol: '{holder_symbol}'}})-[rel:HOLDS]->(b:Object {{nodeSymbol: '{held_symbol}'}})
+        MATCH (a:Object {{nodeSymbol: '{parent_symbol}'}})-[rel:WITH]->(b:Object {{nodeSymbol: '{child_symbol}'}})
         DELETE rel
         RETURN a, b
     """)

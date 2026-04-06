@@ -50,9 +50,9 @@ def obj_holding_rule():
 def transitive_holding_rule():
     def condition(db: Neo4jWrapper):
         return db.query(
-            "MATCH (r:Robot)-[:HOLDS]->(y:Object)-[:HOLDS*1..]->(z:Object) "
+            "MATCH (r:Robot)-[:HOLDS]->(y:Object)-[:WITH*1..]->(z:Object) "
             "WHERE NOT (r)-[:HOLDS]->(z) "
-            "RETURN r.name AS robot, r.position AS position, z.nodeSymbol AS object"
+            "RETURN r.name AS robot, z.nodeSymbol AS object"
         )
 
     def action(db: Neo4jWrapper, nodes):
@@ -63,23 +63,37 @@ def transitive_holding_rule():
             db.query(f"""
                 MATCH (r:Robot {{name: '{robot}'}}), (z:Object {{nodeSymbol: '{obj}'}})
                 MERGE (r)-[:HOLDS]->(z)
-                SET z.center = r.position
-                SET z.bbox_center = r.position
                 RETURN z
             """)
 
     return Rule("transitive holding", condition, action)
 
 
+def obj_stacking_rule():
+    def condition(db: Neo4jWrapper):
+        return db.query(
+            "MATCH (x:Object)-[:WITH]->(y:Object) "
+            "RETURN x.nodeSymbol AS sym_x"
+        )
+
+    def action(db: Neo4jWrapper, nodes):
+        db.query(
+            "MATCH (x:Object)-[:WITH]->(y:Object) "
+            "SET y.center = point({x: x.bbox_center.x, y: x.bbox_center.y, "
+            "    z: x.bbox_center.z + x.bbox_dim.z / 2.0 + y.bbox_dim.z / 2.0}), "
+            "    y.bbox_center = point({x: x.bbox_center.x, y: x.bbox_center.y, "
+            "    z: x.bbox_center.z + x.bbox_dim.z / 2.0 + y.bbox_dim.z / 2.0})"
+        )
+
+    return Rule("object stacking", condition, action)
+
+
 def drop_on_unhold_rule():
     def condition(db: Neo4jWrapper):
-        # A Robot->b HOLDS edge is stale-transitive when:
-        # 1. Some Object transitively holds b (so b is "inside" something, not directly gripped)
-        # 2. But Robot no longer holds any Object that transitively reaches b
         return db.query(
             "MATCH (r:Robot)-[:HOLDS]->(b:Object) "
-            "WHERE EXISTS { (:Object)-[:HOLDS*1..]->(b) } "
-            "AND NOT EXISTS { (r)-[:HOLDS]->(a:Object)-[:HOLDS*1..]->(b) } "
+            "WHERE EXISTS { (:Object)-[:WITH*1..]->(b) } "
+            "AND NOT EXISTS { (r)-[:HOLDS]->(a:Object)-[:WITH*1..]->(b) } "
             "RETURN r.name AS robot, b.nodeSymbol AS held"
         )
 
@@ -94,3 +108,55 @@ def drop_on_unhold_rule():
             """)
 
     return Rule("drop on unhold", condition, action)
+
+
+def proximity_class_rule(confused_classes: dict[frozenset, str]):
+    """
+    Args:
+        confused_classes: maps frozenset({class_a, class_b}) -> resolved_class.
+            When two objects of a confused pair have overlapping bounding boxes,
+            both are reclassified to resolved_class.
+    """
+    all_classes = list({c for pair in confused_classes for c in pair})
+
+    def condition(db: Neo4jWrapper):
+        class_list = "[" + ", ".join(f"'{c}'" for c in all_classes) + "]"
+        return db.query(
+            f"MATCH (a:Object), (b:Object) "
+            f"WHERE a.nodeSymbol < b.nodeSymbol "
+            f"AND a.class IN {class_list} AND b.class IN {class_list} "
+            f"AND abs(a.bbox_center.x - b.bbox_center.x) < (a.bbox_dim.x + b.bbox_dim.x) / 2 "
+            f"AND abs(a.bbox_center.y - b.bbox_center.y) < (a.bbox_dim.y + b.bbox_dim.y) / 2 "
+            f"AND abs(a.bbox_center.z - b.bbox_center.z) < (a.bbox_dim.z + b.bbox_dim.z) / 2 "
+            f"RETURN a.nodeSymbol AS sym_a, a.class AS class_a, "
+            f"b.nodeSymbol AS sym_b, b.class AS class_b"
+        )
+
+    def action(db: Neo4jWrapper, nodes):
+        for node in nodes:
+            sym_a, sym_b = node["sym_a"], node["sym_b"]
+            class_a, class_b = node["class_a"], node["class_b"]
+            pair = frozenset({class_a, class_b})
+            resolved = confused_classes.get(pair)
+            if resolved is None:
+                continue
+
+            if class_a == class_b:
+                # Same class: merge b into a, then delete b.
+                for rel in ("WITH", "HOLDS", "CONTAINS"):
+                    db.query(
+                        f"MATCH (x)-[:{rel}]->(b:Object {{nodeSymbol: '{sym_b}'}}) "
+                        f"WHERE x.nodeSymbol <> '{sym_a}' "
+                        f"MATCH (a:Object {{nodeSymbol: '{sym_a}'}}) MERGE (x)-[:{rel}]->(a)"
+                    )
+                db.query(
+                    f"MATCH (b:Object {{nodeSymbol: '{sym_b}'}})-[:WITH]->(x) "
+                    f"WHERE x.nodeSymbol <> '{sym_a}' "
+                    f"MATCH (a:Object {{nodeSymbol: '{sym_a}'}}) MERGE (a)-[:WITH]->(x)"
+                )
+                db.query(f"MATCH (b:Object {{nodeSymbol: '{sym_b}'}}) DETACH DELETE b")
+            else:
+                db.query(f"MATCH (a:Object {{nodeSymbol: '{sym_a}'}}) SET a.class = '{resolved}'")
+                db.query(f"MATCH (b:Object {{nodeSymbol: '{sym_b}'}}) SET b.class = '{resolved}'")
+
+    return Rule("proximity class correction", condition, action)
