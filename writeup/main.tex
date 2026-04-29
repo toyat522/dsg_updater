@@ -1,0 +1,224 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{amssymb}
+\usepackage{csvsimple}
+\usepackage[shortlabels]{enumitem}
+\usepackage[margin=1in]{geometry} 
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{pgfplots}
+\usepackage{subcaption}
+\usepackage{xcolor}
+
+\pgfplotsset{compat=1.9}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+\title{Dynamic Scene Graph Updater Using Answer Set Programming}
+\author{Toya Takahashi}
+\date\today
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+The Dynamic Scene Graph (DSG) stores the robot's semantic understanding of its
+environment as a graph in Neo4j. As the robot acts in the world,
+the graph must be kept internally consistent: objects that are picked up
+should track the robot's position, objects stacked on top of other objects
+should inherit their pose, and relationships that are no longer valid should
+be retracted. This project's purpose is to build a rule-based maintenance
+layer on top of the DSG using Answer Set Programming (ASP) via Clingo,
+enabling humans and LLMs to declare consistency rules in a uniform language
+that is automatically enforced on every update cycle.
+
+Rather than writing rules as Python functions that issue hard-coded Cypher queries,
+we use the Clingo ASP system for a couple of reasons:
+\begin{enumerate}
+    \item \textbf{Scalability}: Without Clingo, adding a new rule requires writing Python
+    and Cypher by hand. There is no shared language in which a human or an
+    LLM can describe what a rule should do.
+    \item \textbf{Consistency}: A rule that derives new edges in the scene graph database may
+    conflict with another rule that deletes them. Running independent Cypher queries does
+    not detect such conflicts; the graph can end up in an inconsistent state.
+\end{enumerate}
+
+With ASP, rules are written in a uniform declarative
+language, and the solver guarantees that the derived state is consistent
+before mutations are committed.
+
+\section{Architecture}
+
+Each update cycle follows three steps.
+
+\begin{enumerate}
+    \item \textbf{Snapshot}: The current graph state is queried from Neo4j
+    and converted into a set of ASP ground facts. For example,
+\begin{lstlisting}[language=Prolog]
+robot("hamilton").
+object("box1").
+object("cup1").
+class("box1", "box").
+class("cup1", "cup").
+holds("hamilton", "box1").
+with("box1", "cup1").\end{lstlisting}
+    \item \textbf{Solve}: The snapshot facts are combined with an ASP rule
+    program and handed to Clingo. The solver computes a set of derived
+    atoms that satisfies all rules and constraints. If any constraint is
+    violated, the solver returns \texttt{UNSAT} and no mutations are applied.
+    \item \textbf{Translate}: (Not yet implemented.)
+    Each action atom in the stable model is translated into a Cypher mutation
+    and executed against Neo4j.
+\end{enumerate}
+
+\section{Example Rules}
+
+Example sets of rules can be found in \texttt{dsg\_updater/examples/asp\_rules\_example.py}.
+
+\subsection{Object Holding Rule}
+
+When a robot holds an object, the object's position in the graph should
+equal the robot's position.
+
+\begin{lstlisting}[language=Prolog]
+update_position(O, R) :- holds(R, O), robot(R), object(O).
+\end{lstlisting}
+
+The action atom \texttt{update\_position(O, R)} instructs the translator to
+set the position of object \texttt{O} to the current position of robot
+\texttt{R}.
+
+\subsection{Object Stacking Rule}
+
+When an object Y is stacked on top of object X (i.e.\ there is a
+\texttt{WITH} edge $X \to Y$), Y's position must be recomputed relative to
+X whenever X moves.
+
+\begin{lstlisting}[language=Prolog]
+update_stack_position(Y, X) :- with(X, Y), object(X), object(Y).
+\end{lstlisting}
+
+The action atom \texttt{update\_stack\_position(Y, X)} instructs the
+translator to reposition Y on top of X's bounding box.
+
+\section{Types of Rules to Specify}
+
+\subsection{Labeling and Classification}
+
+\begin{itemize}
+    \item \textbf{Region-based labeling}: If an object is located inside a
+        semantic region (e.g. a room or zone), it can be assigned a label derived from that region.
+    \item \textbf{Bulk reclassification}: All objects of class X are relabeled to class Y.
+        This can be useful for correcting systematic misclassifications from the perception system.
+    \item \textbf{Proximity-based class correction}: Two overlapping objects of semantically confused
+        classes are reclassified to a canonical class, or merged if they share the same class.
+\end{itemize}
+
+\subsection{Cardinality and Mutual Exclusion}
+
+The following can be expressed as integrity constraints:
+
+\begin{itemize}
+    \item \textbf{At most one object held}: A robot holds at most one object
+    \item \textbf{No objects of label X exist}: Assert that a particular class should never appear in the graph
+\end{itemize}
+
+\subsection{Integrity Constraints}
+
+These rules assert invariants that must hold before any mutations are committed.
+If a constraint fires, the solver returns \texttt{UNSAT} and the update cycle
+is skipped entirely.
+
+\begin{lstlisting}[language=Prolog]
+% A HOLDS edge must point to a known robot.
+:- holds(R, _), not robot(R).
+
+% WITH edges must not form self-loops.
+:- with(X, X).
+
+% An object cannot be held by two robots simultaneously.
+:- holds(R1, O), holds(R2, O), R1 != R2.
+
+% At most one object is held by one robot.
+:- holds(R, O1), holds(R, O2), O1 != O2.
+
+% A particular class should never appear.
+:- class(_, "X").
+\end{lstlisting}
+
+\subsection{Discrete Belief With Multiple Possible Answer Sets}
+
+Rather than estimating a continuous probability distribution over object
+states, we maintain a finite set of candidate world states. Each stable
+model corresponds to one hypothesis. For example, after the robot picks up
+an object but loses visual contact, there are two plausible states: the
+object is still held, or it has been placed back at its original location.
+
+\begin{lstlisting}[language=Prolog]
+{held_by_robot(O)} :- picked_up(O).
+at_original(O) :- picked_up(O), not held_by_robot(O).
+\end{lstlisting}
+
+The choice rule (indicated by the braces) produces two answer sets, one which
+\texttt{\{held\_by\_robot\}} is true, and one which it is false. In the example
+above, if \texttt{\{held\_by\_robot\}} is false and \texttt{picked\_up} is true,
+then the corresponding object must be at the original location. The current
+implementation only takes the first model found; supporting a full belief space
+requires collecting all stable models and storing them across cycles.
+
+\section{Potential Problems}
+
+Using ASP rules is a good choice for structural and relational reasoning
+over a static snapshot at a certain point in time, but there are some
+drawbacks in the current system, along with rules which are difficult to
+encode.
+
+\subsection{Re-derivation of Rules Each Cycle}
+
+ASP assumes that anything not derivable is false. Rules must be re-evaluated
+from scratch each cycle, which is a performance bottleneck and will discard
+any fact derived in the previous cycle that is not re-derivable from the
+current snapshot.
+
+\subsection{Multiple Acceptable Solutions}
+
+A rule program can produce more than one answer set, especially if a choice rule is used.
+In the current implementation the solver returns the first model found, which is arbitrary.
+Integrity constraints can eliminate unwanted models but cannot guarantee a unique solution.
+
+\subsection{Temporal Reasoning}
+
+Rules that require temporal reasoning, such as ``if an object has not moved
+in 5 seconds, mark it as placed," are not expressible in the current
+architecture. ASP operates on a single snapshot with no notion of time across cycles.
+
+\subsection{Probabilistic Rules}
+
+ASP is strictly boolean. Uncertainty, confidence scores, and weighted
+preferences cannot be expressed directly.
+
+\end{document}

@@ -1,6 +1,7 @@
+#!/usr/bin/env python3
 import time
 
-from dsg_updater.asp_rule import AspRule
+from dsg_updater.asp_rule import ActionTemplate, AspRule
 from heracles_agents.dsg_interfaces import HeraclesDsgInterface
 from heracles.query_interface import Neo4jWrapper
 
@@ -39,16 +40,58 @@ update_stack_position(Y, X) :- with(X, Y), object(X), object(Y).
 """
 
 
+UPDATE_POSITION_TEMPLATE = ActionTemplate(
+    arg_names=["O", "R"],
+    cypher=(
+        "MATCH (o:Object {nodeSymbol: '$O'}), (r:Robot {name: '$R'}) "
+        "SET o.center = r.position, o.bbox_center = r.position"
+    ),
+)
+
+UPDATE_STACK_POSITION_TEMPLATE = ActionTemplate(
+    arg_names=["Y", "X"],
+    cypher=(
+        "MATCH (parent:Object {nodeSymbol: '$X'}), "
+        "      (child:Object {nodeSymbol: '$Y'}) "
+        "SET child.center = point({"
+        "  x: parent.bbox_center.x, "
+        "  y: parent.bbox_center.y, "
+        "  z: parent.bbox_center.z + parent.bbox_dim.z/2 + child.bbox_dim.z/2"
+        "}), "
+        "child.bbox_center = child.center"
+    ),
+)
+
+
 def obj_holding_rule() -> AspRule:
-    return AspRule("holding obj", OBJ_HOLDING_PROGRAM)
+    return AspRule(
+        "holding obj",
+        OBJ_HOLDING_PROGRAM,
+        templates={
+            "update_position": UPDATE_POSITION_TEMPLATE,
+        },
+    )
 
 
 def obj_stacking_rule() -> AspRule:
-    return AspRule("object stacking", OBJ_STACKING_PROGRAM)
+    return AspRule(
+        "object stacking",
+        OBJ_STACKING_PROGRAM,
+        templates={
+            "update_stack_position": UPDATE_STACK_POSITION_TEMPLATE,
+        },
+    )
 
 
 def combined_rule() -> AspRule:
-    return AspRule("holding and stacking", COMBINED_PROGRAM)
+    return AspRule(
+        "holding and stacking",
+        COMBINED_PROGRAM,
+        templates={
+            "update_position": UPDATE_POSITION_TEMPLATE,
+            "update_stack_position": UPDATE_STACK_POSITION_TEMPLATE,
+        },
+    )
 
 
 def main():
@@ -69,7 +112,7 @@ def main():
             atomic_queries=True,
             print_profiles=False,
         ) as db:
-            atoms = rule.solve(db)
+            atoms = rule.apply(db)
 
         print(f"[{rule.name}] {len(atoms)} action atom(s):")
         for a in sorted(str(a) for a in atoms):

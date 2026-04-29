@@ -1,9 +1,24 @@
 import clingo
 import logging
+from string import Template
 
 from heracles.query_interface import Neo4jWrapper
 
 logger = logging.getLogger(__name__)
+
+
+class ActionTemplate:
+    def __init__(self, arg_names: list[str], cypher: str):
+        self.arg_names = arg_names
+        self.template = Template(cypher)
+
+    def render(self, atom_args: list[str]) -> str:
+        if len(atom_args) != len(self.arg_names):
+            raise ValueError(
+                f"Template expects {len(self.arg_names)} args ",
+                f"({self.arg_names}), got {len(atom_args)}"
+            )
+        return self.template.substitute(dict(zip(self.arg_names, atom_args)))
 
 
 # Helper function to wrap a Python string as a quoted ASP string literal
@@ -46,9 +61,15 @@ def snapshot_to_facts(db: Neo4jWrapper) -> str:
 
 
 class AspRule:
-    def __init__(self, name: str, asp_program: str):
+    def __init__(
+        self,
+        name: str,
+        asp_program: str,
+        templates: dict[str, ActionTemplate] | None = None,
+    ):
         self.name = name
         self.asp_program = asp_program
+        self.templates = templates or {}
 
     def solve(self, db: Neo4jWrapper) -> list[clingo.Symbol]:
         # Snapshot database state into ASP facts
@@ -69,9 +90,21 @@ class AspRule:
 
         return atoms
 
-    # Solve ASP program, translate into cypher queries, apply rules
+    # Solve ASP program, translate atoms to Cypher via templates, execute
     def apply(self, db: Neo4jWrapper) -> list[clingo.Symbol]:
-        raise NotImplementedError
+        atoms = self.solve(db)
+        for atom in atoms:
+            template = self.templates.get(atom.name)
+            if template is None:
+                logger.warning(
+                    f"AspRule '{self.name}': no template for predicate "
+                    f"'{atom.name}/{len(atom.arguments)}': skipping {atom}"
+                )
+                continue
+            args = [(a.string) for a in atom.arguments]
+            cypher = template.render(args)
+            db.query(cypher)
+        return atoms
 
     def __str__(self) -> str:
         return f"AspRule '{self.name}'"
