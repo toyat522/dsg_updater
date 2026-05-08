@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
 
-from dsg_updater.asp_rule import ActionTemplate, AspRule
+from dsg_updater.asp_rule import ActionTemplate, AspRule, snapshot_to_facts
 from heracles_agents.dsg_interfaces import HeraclesDsgInterface
 from heracles.query_interface import Neo4jWrapper
 
@@ -112,7 +112,9 @@ def main():
             atomic_queries=True,
             print_profiles=False,
         ) as db:
-            atoms = rule.apply(db)
+            facts = snapshot_to_facts(db)
+            atoms = rule.solve(facts)
+            rule.apply(atoms, db)
 
         print(f"[{rule.name}] {len(atoms)} action atom(s):")
         for a in sorted(str(a) for a in atoms):
