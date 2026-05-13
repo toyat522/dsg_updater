@@ -71,6 +71,41 @@ With ASP, rules are written in a uniform declarative
 language, and the solver guarantees that the derived state is consistent
 before mutations are committed.
 
+\section{Usage}
+
+Launch the system using the \texttt{heracles\_prior\_dsg} configuration,
+which starts the default ASP rules example. Once the Spot is manually
+moved to a location inside the DSG map, prompts can be sent to the
+ChatDSG LLM. A list of videos of working demonstrations can be found \href{https://drive.google.com/drive/folders/1tmuuLWlVcYUE2DVNGgJkefhnm2Ud9j-Q?usp=sharing}{here}.
+
+\subsection{Pick, Place, and Move}
+
+A working sequence of prompts is:
+
+\begin{enumerate}
+    \item \texttt{can you pick up O27}
+    \item \texttt{can you place O27 at P26231}
+    \item (if needed) \texttt{the place exists as a mesh node}
+    \item (if needed) \texttt{O27 is already picked up}
+    \item \texttt{can you move to O88}
+\end{enumerate}
+
+This sequence shows the robot pick up an object, place it, and move away,
+demonstrating that the object was placed. A video example can be found \href{https://drive.google.com/file/d/1XK5phDP1UGnacWcVvxX2t8TuNP6Jwyv1/view?usp=sharing}{here}.
+
+\subsection{Stacking and Unstacking}
+
+Objects can also be stacked and unstacked within the same ASP example.
+Example prompts:
+
+\begin{itemize}
+    \item \texttt{O285 is not stacked on top of O27}
+    \item \texttt{O285 is stacked on top of O27}
+\end{itemize}
+
+This works because of the updated LLM prompt in
+\texttt{cypher\_interface\_holding\_description.yaml}.
+
 \section{Architecture}
 
 Each update cycle follows three steps.
@@ -90,12 +125,14 @@ with("box1", "cup1").\end{lstlisting}
     program and handed to Clingo. The solver computes a set of derived
     atoms that satisfies all rules and constraints. If any constraint is
     violated, the solver returns \texttt{UNSAT} and no mutations are applied.
-    \item \textbf{Translate}: (Not yet implemented.)
-    Each action atom in the stable model is translated into a Cypher mutation
-    and executed against Neo4j.
+    \item \textbf{Translate}: Each action atom in the stable model is looked up
+    in a dictionary of \texttt{ActionTemplate} objects. Each template is a
+    Cypher query string with named placeholders that are substituted with the
+    atom's arguments and executed against Neo4j.
 \end{enumerate}
 
 \section{Example Rules}
+\label{sec:example_rules}
 
 Example sets of rules can be found in \texttt{dsg\_updater/examples/asp\_rules\_example.py}.
 
@@ -124,6 +161,64 @@ update_stack_position(Y, X) :- with(X, Y), object(X), object(Y).
 
 The action atom \texttt{update\_stack\_position(Y, X)} instructs the
 translator to reposition Y on top of X's bounding box.
+
+\subsection{Belief Space Example}
+
+The belief space example, found in \texttt{dsg\_updater/examples/asp\_belief\_example.py},
+tracks object state across pick-up and placement events using three rules.
+
+\subsubsection{Pickup Tracking}
+
+On the first cycle where a \texttt{HOLDS} edge appears for an object,
+two atoms are derived and persisted into Python memory for future cycles.
+
+\begin{lstlisting}[language=Prolog]
+has_pickup(O)               :- picked_up(_, O).
+add_picked_up(O, R)         :- base_holds(R, O), not has_pickup(O).
+remember_origin(O, X, Y, Z) :- base_holds(_, O), center(O, X, Y, Z), not has_pickup(O).
+\end{lstlisting}
+
+\texttt{add\_picked\_up(O, R)} records that robot \texttt{R} has held object
+\texttt{O} at some point. \texttt{remember\_origin(O, X, Y, Z)} captures the
+object's position at the moment of pick-up. Both are accumulated into a Python
+\texttt{set} and injected as ground facts on every subsequent cycle.
+The guard \texttt{not has\_pickup(O)} ensures these fire only once per object.
+
+\subsubsection{Most Probable Position}
+
+While a \texttt{HOLDS} edge exists, the most probable state is that the robot
+successfully has the object. The position is updated deterministically each cycle.
+This is equivalent to the Object Holding Rule described above.
+
+\begin{lstlisting}[language=Prolog]
+update_position(O, R) :- base_holds(R, O), robot(R), object(O).
+\end{lstlisting}
+
+\subsubsection{Belief Space}
+
+The belief rule enumerates all possible object states using choice rules:
+
+\begin{lstlisting}[language=Prolog]
+held(O)           :- held_by(O, _).
+ever_picked_up(O) :- picked_up(_, O).
+currently_held(O) :- base_holds(_, O).
+
+% while HOLDS edge exists: robot may or may not actually have the object
+{held_by(O, R)}       :- base_holds(R, O).
+at_origin(O, X, Y, Z) :- currently_held(O), not held(O), origin(O, X, Y, Z).
+
+% after HOLDS removed: object may have been placed or dropped
+{placed_at(O)}        :- ever_picked_up(O), not currently_held(O).
+at_origin(O, X, Y, Z) :- ever_picked_up(O), not currently_held(O),
+                          not placed_at(O), origin(O, X, Y, Z).
+\end{lstlisting}
+
+While a \texttt{HOLDS} edge is present, the choice rule on \texttt{held\_by}
+produces two worlds per held object: one in which the robot has it, and one
+in which it does not. After the \texttt{HOLDS} edge is removed, the choice rule
+on \texttt{placed\_at} produces two worlds: the object was placed at the new location, or it
+was dropped and is back at its origin. With $n$ objects in an uncertain
+state, $2^n$ worlds are produced in total.
 
 \section{Types of Rules to Specify}
 
@@ -174,21 +269,8 @@ is skipped entirely.
 
 Rather than estimating a continuous probability distribution over object
 states, we maintain a finite set of candidate world states. Each stable
-model corresponds to one hypothesis. For example, after the robot picks up
-an object but loses visual contact, there are two plausible states: the
-object is still held, or it has been placed back at its original location.
-
-\begin{lstlisting}[language=Prolog]
-{held_by_robot(O)} :- picked_up(O).
-at_original(O) :- picked_up(O), not held_by_robot(O).
-\end{lstlisting}
-
-The choice rule (indicated by the braces) produces two answer sets, one which
-\texttt{\{held\_by\_robot\}} is true, and one which it is false. In the example
-above, if \texttt{\{held\_by\_robot\}} is false and \texttt{picked\_up} is true,
-then the corresponding object must be at the original location. The current
-implementation only takes the first model found; supporting a full belief space
-requires collecting all stable models and storing them across cycles.
+model corresponds to one hypothesis. An example implementation is described
+in Section~\ref{sec:example_rules} and in \texttt{dsg\_updater/examples/asp\_belief\_example.py}.
 
 \section{Potential Problems}
 
